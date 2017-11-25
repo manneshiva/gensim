@@ -57,20 +57,15 @@ cdef unsigned long long fast_sentence_sg_neg(
     cdef int d
 
     memset(work, 0, size * cython.sizeof(REAL_t))
-    printf("%s\n", "x1")
     memset(l1, 0, size * cython.sizeof(REAL_t))
     # cdef REAL_t *l1
     # l1 = <REAL_t *>calloc(size, cython.sizeof(REAL_t))
-    printf("%s\n", "x2")
     scopy(&size, &syn0_vocab[row1], &ONE, l1, &ONE)
     for d in range(1, subwords_len):
         subword_row = subwords_index[d] * size
-        printf("%s\n", "x13")
         our_saxpy(&size, &ONEF, &syn0_ngrams[subword_row], &ONE, l1, &ONE)
-    printf("%s\n", "x14")
     cdef REAL_t norm_factor = ONEF / subwords_len
     sscal(&size, &norm_factor, l1 , &ONE)
-    printf("%s\n", "x15")
 
     for d in range(negative+1):
         if d == 0:
@@ -89,20 +84,15 @@ cdef unsigned long long fast_sentence_sg_neg(
             continue
         f = EXP_TABLE[<int>((f_dot + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]
         g = (label - f) * alpha
-        printf("%s\n", "x16")
         our_saxpy(&size, &g, &syn1neg[row2], &ONE, work, &ONE)
-        printf("%s\n", "x17")
         our_saxpy(&size, &g, l1, &ONE, &syn1neg[row2], &ONE)
-    printf("%s\n", "x18")
     our_saxpy(&size, &word_locks_vocab[word2_index], work, &ONE, &syn0_vocab[row1], &ONE)
     for d in range(1, subwords_len):
         our_saxpy(&size, &word_locks_ngrams[subwords_index[d]], work, &ONE, &syn0_ngrams[subwords_index[d]*size], &ONE)
-    printf("%s\n", "x19")
-
     return next_random
 
 
-def train_batch_sg(model, sentences, alpha, _work):
+def train_batch_sg(model, sentences, alpha, _work, _l1):
     cdef int hs = model.hs
     cdef int negative = model.negative
     cdef int sample = (model.sample != 0)
@@ -113,8 +103,8 @@ def train_batch_sg(model, sentences, alpha, _work):
     cdef REAL_t *word_locks_ngrams = <REAL_t *>(np.PyArray_DATA(model.syn0_ngrams_lockf))
 
     cdef REAL_t *work
-    # _l1 = matutils.zeros_aligned(model.layer1_size, dtype=REAL)
     cdef REAL_t *l1
+    
     cdef REAL_t _alpha = alpha
     cdef int size = model.layer1_size
 
@@ -149,7 +139,8 @@ def train_batch_sg(model, sentences, alpha, _work):
 
     # convert Python structures to primitive types, so we can release the GIL
     work = <REAL_t *>np.PyArray_DATA(_work)
-    l1 = <REAL_t *>calloc(size, cython.sizeof(REAL_t))
+    l1 = <REAL_t *>np.PyArray_DATA(_l1)
+    # l1 = <REAL_t *>calloc(size, cython.sizeof(REAL_t))
 
     # prepare C structures so we can go "full C" and release the Python GIL
     vlookup = model.wv.vocab

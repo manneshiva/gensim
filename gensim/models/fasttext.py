@@ -193,10 +193,9 @@ class FastText(Word2Vec):
 
     def _do_train_job(self, sentences, alpha, inits):
         work, neu1 = inits
-        # l1 = matutils.zeros_aligned(self.layer1_size, dtype=REAL)
         tally = 0
         if self.sg:
-            tally += train_batch_sg(self, sentences, alpha, work)
+            tally += train_batch_sg(self, sentences, alpha, work, neu1)
         else:
             tally += train_batch_cbow(self, sentences, alpha, work, neu1)
 
