@@ -58,7 +58,7 @@ except ImportError:
             result += len(word_vocabs)
         return result
 
-    def train_batch_sg(model, sentences, alpha, work=None):
+    def train_batch_sg(model, sentences, alpha, work=None, neu1=None):
         result = 0
         for sentence in sentences:
             word_vocabs = [model.wv.vocab[w] for w in sentence if w in model.wv.vocab and
