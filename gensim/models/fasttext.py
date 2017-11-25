@@ -9,69 +9,77 @@ from numpy import zeros, ones, vstack, sum as np_sum, empty, float32 as REAL
 from gensim.models.word2vec import Word2Vec, train_sg_pair, train_cbow_pair
 from gensim.models.wrappers.fasttext import FastTextKeyedVectors
 from gensim.models.wrappers.fasttext import FastText as Ft_Wrapper, compute_ngrams, ft_hash
+from gensim import matutils
 
 logger = logging.getLogger(__name__)
 
-MAX_WORDS_IN_BATCH = 10000
+try:
+    # TODO : log FAST_VERSION
+    from gensim.models.fasttext_inner import train_batch_sg
+    from gensim.models.fasttext_inner import FAST_VERSION, MAX_WORDS_IN_BATCH
 
+except ImportError:
+    # why falling back - log
+    # failed... fall back to plain numpy (20-80x slower training than the above)
+    FAST_VERSION = -1
+    MAX_WORDS_IN_BATCH = 10000
 
-def train_batch_cbow(model, sentences, alpha, work=None, neu1=None):
-    result = 0
-    for sentence in sentences:
-        word_vocabs = [model.wv.vocab[w] for w in sentence if w in model.wv.vocab and
-                       model.wv.vocab[w].sample_int > model.random.rand() * 2**32]
-        for pos, word in enumerate(word_vocabs):
-            reduced_window = model.random.randint(model.window)
-            start = max(0, pos - model.window + reduced_window)
-            window_pos = enumerate(word_vocabs[start:(pos + model.window + 1 - reduced_window)], start)
-            word2_indices = [word2.index for pos2, word2 in window_pos if (word2 is not None and pos2 != pos)]
+    def train_batch_cbow(model, sentences, alpha, work=None, neu1=None):
+        result = 0
+        for sentence in sentences:
+            word_vocabs = [model.wv.vocab[w] for w in sentence if w in model.wv.vocab and
+                           model.wv.vocab[w].sample_int > model.random.rand() * 2**32]
+            for pos, word in enumerate(word_vocabs):
+                reduced_window = model.random.randint(model.window)
+                start = max(0, pos - model.window + reduced_window)
+                window_pos = enumerate(word_vocabs[start:(pos + model.window + 1 - reduced_window)], start)
+                word2_indices = [word2.index for pos2, word2 in window_pos if (word2 is not None and pos2 != pos)]
 
-            word2_subwords = []
-            vocab_subwords_indices = []
-            ngrams_subwords_indices = []
+                word2_subwords = []
+                vocab_subwords_indices = []
+                ngrams_subwords_indices = []
 
-            for index in word2_indices:
-                vocab_subwords_indices += [index]
-                word2_subwords += model.wv.ngrams_word[model.wv.index2word[index]]
+                for index in word2_indices:
+                    vocab_subwords_indices += [index]
+                    word2_subwords += model.wv.ngrams_word[model.wv.index2word[index]]
 
-            for subword in word2_subwords:
-                ngrams_subwords_indices.append(model.wv.ngrams[subword])
+                for subword in word2_subwords:
+                    ngrams_subwords_indices.append(model.wv.ngrams[subword])
 
-            l1_vocab = np_sum(model.wv.syn0_vocab[vocab_subwords_indices], axis=0)  # 1 x vector_size
-            l1_ngrams = np_sum(model.wv.syn0_ngrams[ngrams_subwords_indices], axis=0)  # 1 x vector_size
+                l1_vocab = np_sum(model.wv.syn0_vocab[vocab_subwords_indices], axis=0)  # 1 x vector_size
+                l1_ngrams = np_sum(model.wv.syn0_ngrams[ngrams_subwords_indices], axis=0)  # 1 x vector_size
 
-            l1 = np_sum([l1_vocab, l1_ngrams], axis=0)
-            subwords_indices = [vocab_subwords_indices] + [ngrams_subwords_indices]
-            if (subwords_indices[0] or subwords_indices[1]) and model.cbow_mean:
-                l1 /= (len(subwords_indices[0]) + len(subwords_indices[1]))
+                l1 = np_sum([l1_vocab, l1_ngrams], axis=0)
+                subwords_indices = [vocab_subwords_indices] + [ngrams_subwords_indices]
+                if (subwords_indices[0] or subwords_indices[1]) and model.cbow_mean:
+                    l1 /= (len(subwords_indices[0]) + len(subwords_indices[1]))
 
-            train_cbow_pair(model, word, subwords_indices, l1, alpha, is_ft=True)  # train on the sliding window for target word
-        result += len(word_vocabs)
-    return result
+                train_cbow_pair(model, word, subwords_indices, l1, alpha, is_ft=True)  # train on the sliding window for target word
+            result += len(word_vocabs)
+        return result
 
+    def train_batch_sg(model, sentences, alpha, work=None):
+        result = 0
+        for sentence in sentences:
+            word_vocabs = [model.wv.vocab[w] for w in sentence if w in model.wv.vocab and
+                           model.wv.vocab[w].sample_int > model.random.rand() * 2**32]
+            for pos, word in enumerate(word_vocabs):
+                reduced_window = model.random.randint(model.window)  # `b` in the original word2vec code
+                # now go over all words from the (reduced) window, predicting each one in turn
+                start = max(0, pos - model.window + reduced_window)
 
-def train_batch_sg(model, sentences, alpha, work=None):
-    result = 0
-    for sentence in sentences:
-        word_vocabs = [model.wv.vocab[w] for w in sentence if w in model.wv.vocab and
-                       model.wv.vocab[w].sample_int > model.random.rand() * 2**32]
-        for pos, word in enumerate(word_vocabs):
-            reduced_window = model.random.randint(model.window)  # `b` in the original word2vec code
-            # now go over all words from the (reduced) window, predicting each one in turn
-            start = max(0, pos - model.window + reduced_window)
+                subwords_indices = [word.index]
+                word2_subwords = model.wv.ngrams_word[model.wv.index2word[word.index]]
 
-            subwords_indices = [word.index]
-            word2_subwords = model.wv.ngrams_word[model.wv.index2word[word.index]]
+                for subword in word2_subwords:
+                    subwords_indices.append(model.wv.ngrams[subword])
 
-            for subword in word2_subwords:
-                subwords_indices.append(model.wv.ngrams[subword])
+                for pos2, word2 in enumerate(word_vocabs[start:(pos + model.window + 1 - reduced_window)], start):
+                    if pos2 != pos:  # don't train on the `word` itself
+                        train_sg_pair(model, model.wv.index2word[word2.index], subwords_indices, alpha, is_ft=True)
 
-            for pos2, word2 in enumerate(word_vocabs[start:(pos + model.window + 1 - reduced_window)], start):
-                if pos2 != pos:  # don't train on the `word` itself
-                    train_sg_pair(model, model.wv.index2word[word2.index], subwords_indices, alpha, is_ft=True)
-
-        result += len(word_vocabs)
-    return result
+            result += len(word_vocabs)
+        return result
 
 
 class FastText(Word2Vec):
@@ -185,6 +193,7 @@ class FastText(Word2Vec):
 
     def _do_train_job(self, sentences, alpha, inits):
         work, neu1 = inits
+        # l1 = matutils.zeros_aligned(self.layer1_size, dtype=REAL)
         tally = 0
         if self.sg:
             tally += train_batch_sg(self, sentences, alpha, work)
